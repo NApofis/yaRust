@@ -1,0 +1,15 @@
+[package]
+name = "bank_account_parser"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+mt940 = "1"
+regex = "1"
+chrono = "0.4"
+rust_decimal = "1"
+quick-xml = "0.39"
+csv = "1.4"
+uuid = { version = "1", features = ["v4"] }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
