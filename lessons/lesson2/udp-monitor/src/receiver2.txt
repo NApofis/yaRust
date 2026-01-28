@@ -1,0 +1,370 @@
+// Cargo.toml
+
+[package]
+name = "room_monitoring"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["random"]  # Фичи по умолчанию
+random = ["dep:rand"] # Фича random включает опциональную зависимость rand
+sqlite = []           # Пример дополнительной фичи
+logging = ["dep:log"] # Новая фича logging
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+bincode = "1.3"
+rand = { version = "0.8", optional = true }  # Опциональная зависимость
+log = { version = "0.4", optional = true }   # Новая опциональная зависимость
+
+[[bin]]
+name = "sensor_simulator"
+path = "src/bin/sensor_simulator.rs"
+
+[[bin]]
+name = "monitor"
+path = "src/bin/monitor.rs"
+
+
+// src/logging.rs
+
+#[cfg(feature = "logging")]
+pub use log::{debug, error, info, trace, warn};
+
+// Макросы-заглушки, когда фича logging отключена
+#[cfg(not(feature = "logging"))]
+#[macro_export]
+macro_rules! debug {
+    ($($arg:tt)*) => {};
+}
+
+#[cfg(not(feature = "logging"))]
+#[macro_export]
+macro_rules! info {
+    ($($arg:tt)*) => {};
+}
+
+#[cfg(not(feature = "logging"))]
+#[macro_export]
+macro_rules! warn {
+    ($($arg:tt)*) => {};
+}
+
+#[cfg(not(feature = "logging"))]
+#[macro_export]
+macro_rules! error {
+    ($($arg:tt)*) => {};
+}
+
+#[cfg(not(feature = "logging"))]
+#[macro_export]
+macro_rules! trace {
+    ($($arg:tt)*) => {};
+}
+
+// Функция инициализации логирования
+#[cfg(feature = "logging")]
+pub fn init_logger() {
+    env_logger::init();
+    info!("Логирование инициализировано");
+}
+
+#[cfg(not(feature = "logging"))]
+pub fn init_logger() {
+    // Ничего не делаем, когда логирование отключено
+}
+
+// src/lib.rs
+
+pub mod metrics;
+pub mod receiver;
+pub mod sender;
+
+// Условно компилируем модуль логирования
+#[cfg(feature = "logging")]
+pub mod logging;
+
+#[cfg(not(feature = "logging"))]
+mod logging;
+
+pub use metrics::RoomMetrics;
+pub use receiver::MetricsReceiver;
+pub use sender::MetricsSender;
+
+// Реэкспортируем макросы логирования
+pub use logging::{debug, error, info, trace, warn, init_logger};
+
+// src/sender.rs
+
+use crate::{debug, error, info, warn, init_logger, RoomMetrics};
+use bincode;
+use std::net::UdpSocket;
+use std::thread;
+use std::time::Duration;
+
+pub struct MetricsSender {
+    socket: UdpSocket,
+}
+
+impl MetricsSender {
+    pub fn new(bind_addr: &str) -> Result<Self, std::io::Error> {
+        let socket = UdpSocket::bind(bind_addr)?;
+
+        // Инициализируем логирование, если фича включена
+        init_logger();
+
+        info!("MetricsSender создан на адресе {}", bind_addr);
+        Ok(Self { socket })
+    }
+
+    pub fn send_to(
+        &self,
+        metrics: &RoomMetrics,
+        target_addr: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        debug!("Сериализация метрик: {:?}", metrics);
+        let encoded = bincode::serialize(metrics)?;
+
+        debug!("Отправка {} байт на {}", encoded.len(), target_addr);
+        let sent_bytes = self.socket.send_to(&encoded, target_addr)?;
+
+        trace!("Успешно отправлено {} байт", sent_bytes);
+        Ok(())
+    }
+
+    pub fn start_broadcasting(
+        self,
+        target_addr: String,
+        interval_ms: u64,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        info!(
+            "Запуск трансляции метрик на {} каждые {} мс",
+            target_addr, interval_ms
+        );
+
+        // Информация о включённых фичах
+        #[cfg(feature = "random")]
+        info!("Фича 'random' активна - используется rand для генерации данных");
+
+        #[cfg(not(feature = "random"))]
+        warn!("Фича 'random' отключена - используется детерминистическая генерация");
+
+        let mut counter = 0;
+
+        loop {
+            counter += 1;
+            debug!("Генерация метрик #{}", counter);
+
+            let metrics = RoomMetrics::random();
+            trace!("Сгенерированные метрики: {:?}", metrics);
+
+            match self.send_to(&metrics, &target_addr) {
+                Ok(()) => {
+                    info!(
+                        "[{}] Отправлено: {:.1}°C, {:.1}% влажности, давление: {:.1} hPa, дверь: {}",
+                        metrics.formatted_time(),
+                        metrics.temperature,
+                        metrics.humidity,
+                        metrics.pressure,
+                        if metrics.door_open { "открыта" } else { "закрыта" },
+                    );
+
+                    // Логирование тревожных состояний
+                    if metrics.door_open {
+                        warn!("🚨 Обнаружена открытая дверь!");
+                    }
+                    if metrics.temperature > 30.0 {
+                        warn!("⚠️  Высокая температура: {:.1}°C", metrics.temperature);
+                    }
+
+                    // Демонстрация фичи sqlite
+                    #[cfg(feature = "sqlite")]
+                    {
+                        debug!("SQL-запрос: {}", metrics.to_sql());
+                    }
+                }
+                Err(e) => {
+                    error!("Ошибка отправки метрик: {}", e);
+                }
+            }
+
+            debug!("Ожидание {} мс до следующей отправки", interval_ms);
+            thread::sleep(Duration::from_millis(interval_ms));
+        }
+    }
+}
+
+// src/receiver.rs
+
+use crate::{debug, error, info, trace, warn, init_logger, RoomMetrics};
+use bincode;
+use std::net::UdpSocket;
+use std::sync::mpsc;
+use std::thread;
+
+pub struct MetricsReceiver {
+    socket: UdpSocket,
+}
+
+impl MetricsReceiver {
+    pub fn new(bind_addr: &str) -> Result<Self, std::io::Error> {
+        let socket = UdpSocket::bind(bind_addr)?;
+
+        // Инициализируем логирование, если фича включена
+        init_logger();
+
+        info!("MetricsReceiver создан на адресе {}", bind_addr);
+        Ok(Self { socket })
+    }
+
+    pub fn start_with_channel(
+        self,
+    ) -> (thread::JoinHandle<()>, mpsc::Receiver<(RoomMetrics, std::net::SocketAddr)>) {
+        let (tx, rx) = mpsc::channel();
+
+        info!("Запуск приёмника в отдельном потоке с каналом");
+
+        let handle = thread::spawn(move || {
+            if let Err(e) = self.receive_loop_with_channel(tx) {
+                error!("Ошибка в receive_loop_with_channel: {}", e);
+            }
+        });
+
+        (handle, rx)
+    }
+
+    fn receive_loop_with_channel(
+        self,
+        tx: mpsc::Sender<(RoomMetrics, std::net::SocketAddr)>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut buf = [0u8; 1024];
+        let mut packet_count = 0;
+
+        info!("Цикл приёма данных активирован");
+
+        loop {
+            debug!("Ожидание данных...");
+            match self.socket.recv_from(&mut buf) {
+                Ok((size, src_addr)) => {
+                    packet_count += 1;
+                    trace!("Получено {} байт от {}", size, src_addr);
+
+                    match bincode::deserialize::<RoomMetrics>(&buf[..size]) {
+                        Ok(metrics) => {
+                            debug!("Успешная десериализация пакета #{}", packet_count);
+
+                            // Логирование важных событий
+                            if metrics.door_open {
+                                warn!("🚨 Получены данные с открытой дверью от {}", src_addr);
+                            }
+
+                            // Отправляем данные в основной поток
+                            if tx.send((metrics, src_addr)).is_err() {
+                                warn!("Канал закрыт, завершение потока приёма");
+                                break;
+                            }
+
+                            trace!("Метрики отправлены в канал");
+                        }
+                        Err(e) => {
+                            error!("Ошибка десериализации пакета #{}: {}", packet_count, e);
+                            debug!("Сырые данные: {:?}", &buf[..size]);
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("Ошибка получения данных: {}", e);
+                }
+            }
+        }
+
+        info!("Цикл приёма данных завершён. Обработано пакетов: {}", packet_count);
+        Ok(())
+    }
+}
+
+
+// examples/demo_all_features.rs
+
+use room_monitoring::{init_logger, RoomMetrics, debug, info, warn};
+
+fn main() {
+    // Инициализируем логирование, если фича включена
+    init_logger();
+
+    println!("Демонстрация всех features");
+    println!("=============================");
+
+    info!("Начало демонстрации фич");
+
+    // Генерируем тестовые метрики
+    debug!("Генерация тестовых метрик");
+    let metrics = RoomMetrics::random();
+
+    println!("Сгенерированные метрики:");
+    println!("  Температура: {:.1}°C", metrics.temperature);
+    println!("  Влажность: {:.1}%", metrics.humidity);
+    println!("  Давление: {:.1}hPa", metrics.pressure);
+    println!("  Дверь: {}", if metrics.door_open { "открыта" } else { "закрыта" });
+
+    // Логирование в зависимости от состояния
+    if metrics.door_open {
+        warn!("Обнаружена открытая дверь!");
+    }
+    if metrics.temperature > 25.0 {
+        warn!("Температура выше комфортной: {:.1}°C", metrics.temperature);
+    }
+
+    // Показываем, какие фичи активны
+    info!("Активные фичи:");
+
+    #[cfg(feature = "random")]
+    println!("Фича 'random' активна");
+
+    #[cfg(feature = "sqlite")]
+    println!("Фича 'sqlite' активна");
+
+    #[cfg(feature = "logging")]
+    println!("Фича 'logging' активна");
+
+    #[cfg(not(feature = "random"))]
+    println!("Фича 'random' отключена");
+
+    #[cfg(not(feature = "sqlite"))]
+    println!("Фича 'sqlite' отключена");
+
+    #[cfg(not(feature = "logging"))]
+    println!("Фича 'logging' отключена");
+
+    // Демонстрация фичи sqlite
+    #[cfg(feature = "sqlite")]
+    {
+        debug!("Генерация SQL-запроса");
+        println!("\n SQL-запрос:");
+        println!("{}", metrics.to_sql());
+    }
+
+    info!("Демонстрация завершена");
+}
+
+# В раздел dependencies добавляем:
+[dependencies]
+# ... остальные зависимости
+
+# env_logger, только когда включена фича logging
+env_logger = { version = "0.10", optional = true }
+
+# И обновляем фичу logging:
+[features]
+logging = ["dep:log", "dep:env_logger"]
+
+
+
+# Включаем логирование и устанавливаем уровень
+RUST_LOG=info cargo run --example demo_all_features --features logging
+
+# Подробное логирование
+RUST_LOG=debug cargo run --example demo_all_features --features logging
+
+# Только предупреждения и ошибки
+RUST_LOG=warn cargo run --example demo_all_features --features logging
