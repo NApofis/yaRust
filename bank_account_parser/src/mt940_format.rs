@@ -5,7 +5,7 @@ use rust_decimal::Decimal;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::mem;
 use std::str::FromStr;
-
+use rust_decimal::prelude::Zero;
 use crate::camt053_format::Camt053Format;
 use crate::common::{FormatError, GeneratorFormatError};
 use crate::common::debit_credit::DebitOrCredit;
@@ -67,23 +67,41 @@ pub struct AvailableBalance {
     pub amount: Decimal,
 }
 
+impl AvailableBalance {
+    pub fn merge(&mut self, balance: &AvailableBalance) {
+        if balance.debit_credit_indicator != DebitOrCredit::Debit {
+            self.debit_credit_indicator = balance.debit_credit_indicator;
+        }
+        if balance.date != NaiveDate::default() {
+            self.date = balance.date;
+        }
+        if !balance.iso_currency_code.is_empty() {
+            self.iso_currency_code = balance.iso_currency_code.clone();
+        }
+        if balance.amount != Decimal::zero() {
+            self.amount = balance.amount;
+        }
+    }
+}
+
 #[derive(Default, Clone)]
 pub struct Balance {
     pub is_intermediate: bool,
-    pub debit_credit_indicator: DebitOrCredit,
-    pub date: NaiveDate,
-    pub iso_currency_code: String,
-    pub amount: Decimal,
+    pub balance: AvailableBalance,
+}
+
+impl Balance {
+    pub fn merge(&mut self, balance: &Balance) {
+        if balance.is_intermediate {
+            self.is_intermediate = true;
+        }
+        self.balance.merge(&balance.balance);
+    }
 }
 
 impl From<Balance> for AvailableBalance {
     fn from(value: Balance) -> Self {
-        Self {
-            debit_credit_indicator: value.debit_credit_indicator,
-            date: value.date,
-            iso_currency_code: value.iso_currency_code,
-            amount: value.amount,
-        }
+        value.balance
     }
 }
 
@@ -274,10 +292,12 @@ impl MT940Format {
 
         Ok(Balance {
             is_intermediate,
-            debit_credit_indicator: ext_dc,
-            date,
-            iso_currency_code: cur,
-            amount,
+            balance: AvailableBalance {
+                debit_credit_indicator: ext_dc,
+                date,
+                iso_currency_code: cur,
+                amount
+            }
         })
     }
 
@@ -349,7 +369,7 @@ impl MT940Format {
         while i < s.len() && (s.as_bytes()[i] as char).is_ascii_digit() {
             i += 1;
         }
-        if i == start_amount || i >= s.len() || s.as_bytes()[i] != b',' {
+        if i == start_amount || i >= s.len() || (s.as_bytes()[i] != b',' && s.as_bytes()[i] != b'.') {
             return Err(Self::unknown_value_error(
                 format!("в блоке 61 не удалось выделить amount - {}", s).as_str(),
             ));
@@ -490,7 +510,7 @@ impl MT940Format {
     }
 
     fn write_balance<W: Write>(writer: &mut W, tag: &str, balance: &Balance, first: &mut bool) -> Result<(), FormatError> {
-        if balance.amount.is_zero() {
+        if balance.balance.amount.is_zero() {
             return Ok(());
         }
 
@@ -500,10 +520,10 @@ impl MT940Format {
             tag.to_string() + "F"
         };
         let mut result = String::new();
-        result += balance.debit_credit_indicator.to_string();
-        result += &balance.date.format("%y%m%d").to_string();
-        result += &balance.iso_currency_code;
-        result += &balance.amount.to_string();
+        result += balance.balance.debit_credit_indicator.to_string();
+        result += &balance.balance.date.format("%y%m%d").to_string();
+        result += &balance.balance.iso_currency_code;
+        result += &balance.balance.amount.to_string();
         Self::write_message(writer, &current_tag, &result, first)?;
         Ok(())
     }
@@ -597,12 +617,28 @@ impl MT940Format {
                 writer.write_all("-}".as_bytes())?;
             }
         }
-        if let Some(l) = self.other_data.last() {
+        if self.other_data.len() > self.transactions.len() && let Some(l) = self.other_data.last() {
             writer.write_all(l.to_string().as_bytes())?;
         }
 
         Ok(())
     }
+
+    fn get_avalbal<'a>(name: &String, message: &'a mut Message) -> Option<&'a mut AvailableBalance>{
+        match name.as_str() {
+            "CLBD" => Some(&mut message.closing_balance.balance),
+            "CLAV" => {
+                message.closing_available_balance = Some(AvailableBalance::default());
+                message.closing_available_balance.as_mut()
+            },
+            "FWAV" => {
+                message.forward_available_balance = Some(AvailableBalance::default());
+                message.forward_available_balance.as_mut()
+            },
+            "OPBD" | _ => Some(&mut message.opening_balance.balance),
+        }
+    }
+
 }
 
 impl<'a> IntoIterator for &'a MT940Format {
@@ -616,6 +652,7 @@ impl<'a> IntoIterator for &'a MT940Format {
 
 impl From<Camt053Format> for MT940Format {
     fn from(value: Camt053Format) -> Self {
+
         let mut result = Vec::new();
         let mut message = Message::default();
         let mut base_orgn_msg_id = String::new();
@@ -655,35 +692,38 @@ impl From<Camt053Format> for MT940Format {
                         message.information_to_account_owner = Some(tag.text());
                     }
                 }
-
-                "/Stmt/Bal/Tp/CdOrPrtry/Cd" => {
+                "/Stmt/Bal" => {
                     if !balance_name.is_empty() {
-                        match balance_name.as_str() {
-                            "OPBD" => message.opening_balance = mem::take(&mut balance),
-                            "CLBD" => message.closing_balance = mem::take(&mut balance),
-                            "CLAV" => message.closing_available_balance = Some(mem::take(&mut balance).into()),
-                            "FWAV" => message.forward_available_balance = Some(mem::take(&mut balance).into()),
-                            _ => (),
+                        if let Some(a) = Self::get_avalbal(&balance_name, &mut message) {
+                            a.merge(&balance.balance);
                         }
                     }
+                    balance = Balance::default();
+                    balance_name.clear();
+                }
+                "/Stmt/Bal/Tp/CdOrPrtry/Cd" => {
                     balance_name = tag.text();
                 }
-                "/Stmt/Bal/CdtDbtInd" => match tag.text().as_str() {
-                    "DBIT" => balance.debit_credit_indicator = DebitOrCredit::Debit,
-                    "CRDT" => balance.debit_credit_indicator = DebitOrCredit::Credit,
-                    _ => balance.debit_credit_indicator = DebitOrCredit::Debit,
+                "/Stmt/Bal/CdtDbtInd" => {
+
+                    let _type = match tag.text().as_str() {
+                        "DBIT" => DebitOrCredit::Debit,
+                        "CRDT" => DebitOrCredit::Credit,
+                        _ => DebitOrCredit::Debit,
+                    };
+                    balance.balance.debit_credit_indicator = _type;
                 },
                 "/Stmt/Bal/Dt/Dt" => {
-                    if let Ok(d) = NaiveDate::parse_from_str(tag.text().as_str(), "%Y-%m-%d") {
-                        balance.date = d
+                    if let Ok(d) = NaiveDate::parse_from_str(tag.text().as_str(), "%Y-%m-%dT%H:%M:%S") {
+                        balance.balance.date = d;
                     }
                 }
                 "/Stmt/Bal/Amt" => {
                     if let Ok(amount) = tag.text().replace(",", ".").parse() {
-                        balance.amount = amount;
+                        balance.balance.amount = amount;
                     }
                     if let Some(curr) = tag.get_attr("Ccy") {
-                        balance.iso_currency_code = curr;
+                        balance.balance.iso_currency_code = curr;
                     }
                 }
                 "/Stmt/Ntry" => {
@@ -696,14 +736,14 @@ impl From<Camt053Format> for MT940Format {
                 }
                 "/Stmt/Ntry/ValDt/Dt" => {
                     if let Some(st) = &mut statement
-                        && let Ok(d) = NaiveDate::parse_from_str(tag.text().as_str(), "%Y-%m-%d")
+                        && let Ok(d) = NaiveDate::parse_from_str(tag.text().as_str(), "%Y-%m-%dT%H:%M:%S")
                     {
                         st.value_date = d;
                     }
                 }
                 "/Stmt/Ntry/BookgDt/Dt" => {
                     if let Some(st) = &mut statement
-                        && let Ok(d) = NaiveDate::parse_from_str(tag.text().as_str(), "%Y-%m-%d")
+                        && let Ok(d) = NaiveDate::parse_from_str(tag.text().as_str(), "%Y-%m-%dT%H:%M:%S")
                     {
                         st.entry_date = Some(d);
                     }
@@ -763,13 +803,10 @@ impl From<Camt053Format> for MT940Format {
                 _ => continue,
             }
         }
-
-        match balance_name.as_str() {
-            "OPBD" => message.opening_balance = balance,
-            "CLBD" => message.closing_balance = balance,
-            "CLAV" => message.closing_available_balance = Some(balance.into()),
-            "FWAV" => message.forward_available_balance = Some(balance.into()),
-            _ => (),
+        if !balance_name.is_empty() {
+            if let Some(a) = Self::get_avalbal(&balance_name, &mut message) {
+                a.merge(&balance.balance);
+            }
         }
 
         if let Some(c) = &mut statement {
@@ -780,7 +817,7 @@ impl From<Camt053Format> for MT940Format {
         }
 
         Self {
-            other_data: Vec::new(),
+            other_data: vec!["{3:}".into()],
             transactions: result,
         }
     }
@@ -795,7 +832,7 @@ impl TransactionsReader for MT940Format {
                     amount: statement.amount,
                     operation_type: statement.ext_debit_credit_indicator,
                     date: statement.value_date,
-                    currency: msg.opening_balance.iso_currency_code.clone()
+                    currency: msg.opening_balance.balance.iso_currency_code.clone()
                 });
             }
         }
@@ -816,9 +853,9 @@ mod tests {
     #[test]
     fn parse_balance_yy_mm_dd() {
         let b = MT940Format::parse_balance("C240101USD123,45", 11, false).unwrap();
-        assert_eq!(b.date, NaiveDate::from_ymd_opt(2024, 1, 1).unwrap());
-        assert_eq!(b.iso_currency_code, "USD");
-        assert_eq!(b.amount, Decimal::from_str("123.45").unwrap());
+        assert_eq!(b.balance.date, NaiveDate::from_ymd_opt(2024, 1, 1).unwrap());
+        assert_eq!(b.balance.iso_currency_code, "USD");
+        assert_eq!(b.balance.amount, Decimal::from_str("123.45").unwrap());
         assert!(!b.is_intermediate);
     }
 
@@ -858,16 +895,16 @@ mod tests {
         assert_eq!(stmt.statement_no, "00001");
 
         // Opening balance
-        assert_eq!(stmt.opening_balance.iso_currency_code, "EUR");
-        assert_eq!(stmt.opening_balance.debit_credit_indicator, DebitOrCredit::Credit);
-        assert_eq!(stmt.opening_balance.date, NaiveDate::from_ymd_opt(2024, 1, 1).unwrap());
-        assert_eq!(stmt.opening_balance.amount, Decimal::from_str("100.00").unwrap());
+        assert_eq!(stmt.opening_balance.balance.iso_currency_code, "EUR");
+        assert_eq!(stmt.opening_balance.balance.debit_credit_indicator, DebitOrCredit::Credit);
+        assert_eq!(stmt.opening_balance.balance.date, NaiveDate::from_ymd_opt(2024, 1, 1).unwrap());
+        assert_eq!(stmt.opening_balance.balance.amount, Decimal::from_str("100.00").unwrap());
 
         // Closing balance
-        assert_eq!(stmt.closing_balance.iso_currency_code, "EUR");
-        assert_eq!(stmt.closing_balance.debit_credit_indicator, DebitOrCredit::Credit);
-        assert_eq!(stmt.closing_balance.date, NaiveDate::from_ymd_opt(2024, 1, 2).unwrap());
-        assert_eq!(stmt.closing_balance.amount, Decimal::from_str("98.77").unwrap());
+        assert_eq!(stmt.closing_balance.balance.iso_currency_code, "EUR");
+        assert_eq!(stmt.closing_balance.balance.debit_credit_indicator, DebitOrCredit::Credit);
+        assert_eq!(stmt.closing_balance.balance.date, NaiveDate::from_ymd_opt(2024, 1, 2).unwrap());
+        assert_eq!(stmt.closing_balance.balance.amount, Decimal::from_str("98.77").unwrap());
 
         // Transactions
         assert_eq!(stmt.statement_lines.len(), 1);
@@ -909,10 +946,12 @@ mod tests {
     fn get_balance() -> Balance{
         Balance {
             is_intermediate: false,
-            debit_credit_indicator: DebitOrCredit::Credit,
-            date: NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
-            iso_currency_code: "EUR".to_string(),
-            amount: Decimal::from_str("123.10").unwrap(),
+            balance: AvailableBalance {
+                debit_credit_indicator: DebitOrCredit::Credit,
+                date: NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
+                iso_currency_code: "EUR".to_string(),
+                amount: Decimal::from_str("123.10").unwrap(),
+            }
         }
     }
 
