@@ -13,6 +13,7 @@ enum State {
 
 
 #[derive(Default)]
+#[derive(Debug)]
 pub struct CSVFormat {
     columns: Vec<String>,
     table: Vec<Vec<String>>,
@@ -258,9 +259,10 @@ mod tests {
 
     #[test]
     fn parse_includes_last_column() {
-        let data = minimal_csv();
-        let mut cur = Cursor::new(data.as_bytes());
-        let fmt = CSVFormat::from_read(&mut cur).expect("parse");
+        let fmt = CSVFormat::from_read(&mut Cursor::new("".as_bytes())).unwrap_err();
+        assert_eq!(fmt, FormatError::DataFormatError("Ошибка разбора таблицы csv : не удалось распарсить данные. В результате разбора список колонок и таблица получились пустыми".to_string()));
+
+        let fmt = CSVFormat::from_read(&mut Cursor::new(minimal_csv().as_bytes())).unwrap();
 
         assert_eq!(
             fmt.columns,
