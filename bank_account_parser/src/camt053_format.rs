@@ -130,10 +130,14 @@ impl Camt053Format {
                 }
                 Ok(Event::Comment(_)) => continue,
                 Ok(Event::Eof) => break,
-                Err(e) => Err(Self::unknown_error(
-                    format!("неопределенная ошибка {}", e).as_str(),
+                Err(e) => Err(Self::read_write_error(
+                    format!("не удалось разложить xml файл на теги {}", e).as_str(),
                 ))?,
-                _ => Err(Self::unknown_error("неопределенная ошибка"))?,
+                _ => {
+                    Err(Self::read_write_error(r#"при разборе файла встретился неизвестный раздел.
+                    Сейчас поддерживаются блоки <...>, </...>, комментарии,
+                    текст относящийся к тегам и символы завершения файла."#))?
+                }
             }
             buf.clear();
         }
