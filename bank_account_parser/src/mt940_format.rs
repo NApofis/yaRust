@@ -67,7 +67,7 @@ pub struct AvailableBalance {
     pub amount: Decimal,
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct Balance {
     pub is_intermediate: bool,
     pub debit_credit_indicator: DebitOrCredit,
@@ -87,7 +87,7 @@ impl From<Balance> for AvailableBalance {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct StatementLine {
     pub value_date: NaiveDate,
     pub entry_date: Option<NaiveDate>,
@@ -814,6 +814,18 @@ mod tests {
     use crate::camt053_format::Camt053Format;
 
     #[test]
+    fn check_balance_error(){
+        let result = MT940Format::parse_balance("C240101", 11, false).unwrap_err();
+        assert_eq!(result, FormatError::UnknownValueFormat("Ошибка разбора формата mt940 : слишком короткий баланс C240101".to_string()));
+
+        let result = MT940Format::parse_balance("C--0101USD123", 11, false).unwrap_err();
+        assert_eq!(result, FormatError::UnknownValueFormat("Ошибка разбора формата mt940 : не удалось разобрать дату баланса input contains invalid characters".to_string()));
+
+        let result = MT940Format::parse_balance("C240101USD+++", 11, false).unwrap_err();
+        assert_eq!(result, FormatError::UnknownValueFormat("Ошибка разбора формата mt940 : не удалось разобрать сумму баланса +++".to_string()));
+    }
+
+    #[test]
     fn parse_balance_yy_mm_dd() {
         let b = MT940Format::parse_balance("C240101USD123,45", 11, false).unwrap();
         assert_eq!(b.date, NaiveDate::from_ymd_opt(2024, 1, 1).unwrap());
@@ -833,6 +845,21 @@ mod tests {
         assert!(st.bank_ref.as_deref().unwrap().starts_with("BANKREF"));
     }
 
+    #[test]
+    fn check_block61_error(){
+        let result = MT940Format::parse_61("2401010101D123").unwrap_err();
+        assert_eq!(result, FormatError::UnknownValueFormat("Ошибка разбора формата mt940 : в блоке 61 не удалось выделить amount - 2401010101D123".to_string()));
+
+        let result = MT940Format::parse_61("--01010101D123,45NTRFREF1//BANKREF0123456789").unwrap_err();
+        assert_eq!(result, FormatError::UnknownValueFormat("Ошибка разбора формата mt940 : в блоке 61 не удалось разобрать value_date - --01010101D123,45NTRFREF1//BANKREF0123456789".to_string()));
+
+        let result = MT940Format::parse_61("2401010101D1oo11NTRFREF1//BANKREF0123456789").unwrap_err();
+        assert!(matches!(result, FormatError::UnknownValueFormat(_)));
+
+        let result = MT940Format::parse_61("2401010101D111TRFREF1//BANKREF0123456789").unwrap_err();
+        assert!(matches!(result, FormatError::UnknownValueFormat(_)));
+    }
+
     fn sample_block4() -> String {
         [
             ":20:TRN123456",
@@ -847,6 +874,9 @@ mod tests {
 
     #[test]
     fn test_parse_block4_ok() {
+        let result = MT940Format::parse_block4(":21:TRN123456");
+        assert!(matches!(result, Err(FormatError::DataFormatError(_))));
+
         let input = sample_block4();
         let stmt_vec = MT940Format::parse_block4(&input).expect("parse_block4 должно быть успешным");
 

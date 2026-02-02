@@ -3,7 +3,7 @@ use std::fmt;
 use std::fmt::Formatter;
 use crate::common::debit_credit::DebitOrCredit;
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum FormatError {
     DataFormatError(String),
     UnknownValueFormat(String),
