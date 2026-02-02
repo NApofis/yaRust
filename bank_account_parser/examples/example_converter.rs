@@ -9,7 +9,7 @@ fn help() {
     println!("Описание:");
     println!("  <path> - путь до одного из файлов [examples/data/mt940.exmpl, examples/data/camt053.exmpl]");
     println!("  результат конвертации выводится в стандартный вывод (stdout)");
-    println!("  !!! Приведенные пути актуальны для запуска из корня библиотеки bank_account_parser_lll");
+    println!("  !!! Приведенные пути актуальны для запуска из корня библиотеки bank_account_parser");
     println!("Пример вызова:");
     println!("   converter examples/data/camt053.exmpl");
 }

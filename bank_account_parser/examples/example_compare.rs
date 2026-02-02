@@ -8,7 +8,7 @@ fn help() {
     println!("  compare <path1> <path2>");
     println!("Описание:");
     println!("  <path> - путь до одного из файлов [examples/data/mt940.exmpl, examples/data/camt053.exmpl, examples/data/csv.exmpl]");
-    println!("  !!! Приведенные пути актуальны для запуска из корня библиотеки bank_account_parser_lll");
+    println!("  !!! Приведенные пути актуальны для запуска из корня библиотеки bank_account_parser");
     println!("Пример вызова:");
     println!("   compare examples/data/camt053.exmpl examples/data/csv.exmpl");
 }

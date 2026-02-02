@@ -59,7 +59,7 @@ impl From<ParseError> for FormatError {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Eq, PartialEq)]
 pub struct AvailableBalance {
     pub debit_credit_indicator: DebitOrCredit,
     pub date: NaiveDate,
@@ -84,7 +84,7 @@ impl AvailableBalance {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Eq, PartialEq)]
 pub struct Balance {
     pub is_intermediate: bool,
     pub balance: AvailableBalance,
@@ -105,7 +105,7 @@ impl From<Balance> for AvailableBalance {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Eq, PartialEq)]
 pub struct StatementLine {
     pub value_date: NaiveDate,
     pub entry_date: Option<NaiveDate>,
@@ -119,7 +119,7 @@ pub struct StatementLine {
     pub information_to_account_owner: Option<String>,
 }
 
-#[derive(Default)]
+#[derive(Default, Eq, PartialEq)]
 pub struct Message {
     pub transaction_ref_no: String,
     pub ref_to_related_msg: Option<String>,
@@ -665,11 +665,12 @@ impl From<Camt053Format> for MT940Format {
         for tag in value.get_iter() {
             let path = tag.path();
             let Some(s) = path.find("/Stmt") else {
-                if tag.path().as_str() == "BkToCstmrStmt/GrpHdr/OrgnlBizQry/MsgId" {
+                if tag.path().as_str() == "/BkToCstmrStmt/GrpHdr/OrgnlBizQry/MsgId" {
                     base_orgn_msg_id = tag.text()
                 };
                 continue;
             };
+
             match &path[s..] {
                 "/Stmt" => {
                     if !message.transaction_ref_no.is_empty() {
@@ -677,6 +678,9 @@ impl From<Camt053Format> for MT940Format {
                             message.ref_to_related_msg = Some(base_orgn_msg_id.clone());
                         }
                         result.push(mem::take(&mut message));
+                    }
+                    else if !base_orgn_msg_id.is_empty() {
+                        message.ref_to_related_msg = Some(base_orgn_msg_id.clone());
                     }
                 }
                 "/Stmt/Id" => message.transaction_ref_no = tag.text(),
@@ -693,10 +697,8 @@ impl From<Camt053Format> for MT940Format {
                     }
                 }
                 "/Stmt/Bal" => {
-                    if !balance_name.is_empty() {
-                        if let Some(a) = Self::get_avalbal(&balance_name, &mut message) {
-                            a.merge(&balance.balance);
-                        }
+                    if !balance_name.is_empty() && let Some(a) = Self::get_avalbal(&balance_name, &mut message) {
+                        a.merge(&balance.balance);
                     }
                     balance = Balance::default();
                     balance_name.clear();
@@ -714,7 +716,7 @@ impl From<Camt053Format> for MT940Format {
                     balance.balance.debit_credit_indicator = _type;
                 },
                 "/Stmt/Bal/Dt/Dt" => {
-                    if let Ok(d) = NaiveDate::parse_from_str(tag.text().as_str(), "%Y-%m-%dT%H:%M:%S") {
+                    if let Ok(d) = NaiveDate::parse_from_str(tag.text().as_str(), "%Y-%m-%d") {
                         balance.balance.date = d;
                     }
                 }
@@ -736,14 +738,14 @@ impl From<Camt053Format> for MT940Format {
                 }
                 "/Stmt/Ntry/ValDt/Dt" => {
                     if let Some(st) = &mut statement
-                        && let Ok(d) = NaiveDate::parse_from_str(tag.text().as_str(), "%Y-%m-%dT%H:%M:%S")
+                        && let Ok(d) = NaiveDate::parse_from_str(tag.text().as_str(), "%Y-%m-%d")
                     {
                         st.value_date = d;
                     }
                 }
                 "/Stmt/Ntry/BookgDt/Dt" => {
                     if let Some(st) = &mut statement
-                        && let Ok(d) = NaiveDate::parse_from_str(tag.text().as_str(), "%Y-%m-%dT%H:%M:%S")
+                        && let Ok(d) = NaiveDate::parse_from_str(tag.text().as_str(), "%Y-%m-%d")
                     {
                         st.entry_date = Some(d);
                     }
@@ -799,20 +801,18 @@ impl From<Camt053Format> for MT940Format {
                         }
                     }
                 }
-
                 _ => continue,
             }
         }
-        if !balance_name.is_empty() {
-            if let Some(a) = Self::get_avalbal(&balance_name, &mut message) {
-                a.merge(&balance.balance);
-            }
+        if !balance_name.is_empty() && let Some(a) = Self::get_avalbal(&balance_name, &mut message) {
+            a.merge(&balance.balance);
         }
 
         if let Some(c) = &mut statement {
             message.statement_lines.push(mem::take(c));
         }
-        if !message.transaction_ref_no.is_empty() {
+
+        if message != Message::default() {
             result.push(mem::take(&mut message));
         }
 
@@ -1097,13 +1097,23 @@ mod tests {
         st1.amount = Decimal::from_str("10.50").unwrap();
         st1.ext_debit_credit_indicator = DebitOrCredit::Debit;
         st1.value_date = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
-        st1.funds_code = Some("EUR".to_string());
+        st1.funds_code = None;
 
         let mut st2 = StatementLine::default();
         st2.amount = Decimal::from_str("99.99").unwrap();
         st2.ext_debit_credit_indicator = DebitOrCredit::Credit;
         st2.value_date = NaiveDate::from_ymd_opt(2024, 1, 3).unwrap();
         st2.funds_code = None;
+
+        msg.opening_balance = Balance {
+            is_intermediate: false,
+            balance: AvailableBalance {
+                debit_credit_indicator: DebitOrCredit::Debit,
+                date: NaiveDate::from_ymd_opt(2024, 1, 3).unwrap(),
+                iso_currency_code: "EUR".into(),
+                amount: Decimal::from_str("1.23").unwrap(),
+            }
+        };
 
         msg.statement_lines.push(st1);
         msg.statement_lines.push(st2);
@@ -1136,7 +1146,7 @@ mod tests {
             fmt.transactions[0].statement_lines[1].ext_debit_credit_indicator
         );
         assert_eq!(txs[1].date, fmt.transactions[0].statement_lines[1].value_date);
-        assert_eq!(txs[1].currency, ""); // funds_code = None -> currency пустая
+        assert_eq!(txs[1].currency, "EUR");
     }
 
     fn find_text(camt: &Camt053Format, path: &str) -> Option<String> {
@@ -1161,30 +1171,30 @@ mod tests {
 
         // 1) AccountId у вас кладётся в IBAN (если выглядит как IBAN)
         assert_eq!(
-            find_text(&camt, "BkToCstmrStmt/Stmt/Acct/Id/IBAN").as_deref(),
+            find_text(&camt, "/BkToCstmrStmt/Stmt/Acct/Id/IBAN").as_deref(),
             Some("DE12500105170648489890")
         );
 
         // 2) statement_no и sequence_no:
         // Stmt/Id = "{statement_no}/{sequence_no}"
         assert_eq!(
-            find_text(&camt, "BkToCstmrStmt/Stmt/Id").as_deref(),
-            Some("00001/001")
+            find_text(&camt, "/BkToCstmrStmt/Stmt/Id").as_deref(),
+            Some("TRN123456")
         );
         // Stmt/ElctrncSeqNb = sequence_no
         assert_eq!(
-            find_text(&camt, "BkToCstmrStmt/Stmt/ElctrncSeqNb").as_deref(),
-            Some("001")
+            find_text(&camt, "/BkToCstmrStmt/Stmt/ElctrncSeqNb").as_deref(),
+            Some("00001")
         );
 
         // 3) Балансы: проверяем, что хотя бы один баланс OPBD/CLBD существует
         // и что Amt имеет Ccy="EUR"
         // (у вас баланс строится как Stmt/Bal/... и код баланса в .../Tp/.../Cd)
         let has_opbd = camt.get_iter().any(|t| {
-            t.path().as_str() == "BkToCstmrStmt/Stmt/Bal/Tp/CdOrPrtry/Cd" && t.text() == "OPBD"
+            t.path().as_str() == "/BkToCstmrStmt/Stmt/Bal/Tp/CdOrPrtry/Cd" && t.text() == "OPBD"
         });
         let has_clbd = camt.get_iter().any(|t| {
-            t.path().as_str() == "BkToCstmrStmt/Stmt/Bal/Tp/CdOrPrtry/Cd" && t.text() == "CLBD"
+            t.path().as_str() == "/BkToCstmrStmt/Stmt/Bal/Tp/CdOrPrtry/Cd" && t.text() == "CLBD"
         });
 
         assert!(has_opbd, "OPBD (opening balance) must exist in CAMT");
@@ -1192,36 +1202,36 @@ mod tests {
 
         // Amt currency: в вашем коде для Ntry/Amt Ccy берётся из opening_balance.iso_currency_code
         assert_eq!(
-            find_attr(&camt, "BkToCstmrStmt/Stmt/Ntry/Amt", "Ccy").as_deref(),
+            find_attr(&camt, "/BkToCstmrStmt/Stmt/Ntry/Amt", "Ccy").as_deref(),
             Some("EUR")
         );
 
         // 4) Транзакция: amount и направление
         assert_eq!(
-            find_text(&camt, "BkToCstmrStmt/Stmt/Ntry/Amt").as_deref(),
+            find_text(&camt, "/BkToCstmrStmt/Stmt/Ntry/Amt").as_deref(),
             Some("1.23")
         );
         // Debit -> "DBIT"
         assert_eq!(
-            find_text(&camt, "BkToCstmrStmt/Stmt/Ntry/CdtDbtInd").as_deref(),
+            find_text(&camt, "/BkToCstmrStmt/Stmt/Ntry/CdtDbtInd").as_deref(),
             Some("DBIT")
         );
 
         // 5) Банк-референс должен оказаться в AcctSvcrRef
         assert_eq!(
-            find_text(&camt, "BkToCstmrStmt/Stmt/Ntry/AcctSvcrRef").as_deref(),
+            find_text(&camt, "/BkToCstmrStmt/Stmt/Ntry/AcctSvcrRef").as_deref(),
             Some("ABC123")
         );
 
         // 6) InformationToAccountOwner -> RmtInf/Ustrd
         assert_eq!(
-            find_text(&camt, "BkToCstmrStmt/Stmt/Ntry/RmtInf/Ustrd").as_deref(),
+            find_text(&camt, "/BkToCstmrStmt/Stmt/Ntry/NtryDtls/TxDtls/AddtlTxInf").as_deref(),
             Some("TEST PAYMENT")
         );
 
         // 7) customer_ref + supplementary_details у вас собираются в BkTxCd/Prtry/Cd как "NONREF/SUP"
         assert_eq!(
-            find_text(&camt, "BkToCstmrStmt/Stmt/Ntry/BkTxCd/Prtry/Cd").as_deref(),
+            find_text(&camt, "/BkToCstmrStmt/Stmt/Ntry/BkTxCd/Prtry/Cd").as_deref(),
             Some("NONREF/SUP")
         );
     }

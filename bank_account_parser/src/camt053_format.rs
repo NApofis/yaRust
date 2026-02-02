@@ -276,11 +276,11 @@ impl From<MT940Format> for Camt053Format {
                     [
                         crt_with_text(
                             "FrDtTm",
-                            Some(transaction.opening_balance.balance.date.format("%Y-%m-%dT00:00:00").to_string()),
+                            Some(transaction.opening_balance.balance.date.format("%Y-%m-%d").to_string()),
                         ),
                         crt_with_text(
                             "ToDtTm",
-                            Some(transaction.closing_balance.balance.date.format("%Y-%m-%dT00:00:00").to_string()),
+                            Some(transaction.closing_balance.balance.date.format("%Y-%m-%d").to_string()),
                         ),
                     ].as_ref(),
                 ));
@@ -327,7 +327,7 @@ impl From<MT940Format> for Camt053Format {
                                 "Dt",
                                 [crt_with_text(
                                     "Dt",
-                                    Some(bal.date.format("%Y-%m-%dT00:00:00").to_string()),
+                                    Some(bal.date.format("%Y-%m-%d").to_string()),
                                 )].as_ref(),
                             ),
                             crt_with_child(
@@ -419,12 +419,10 @@ impl From<MT940Format> for Camt053Format {
                 // <Ntry>
                 for stat in &transaction.statement_lines {
                     let amt = crt_with_text("Amt", Some(stat.amount.to_string()));
-                    if let Some(code) = stat.funds_code.clone() {
-                        amt.borrow_mut().attrs.push((
-                            "Ccy".to_string(),
-                            code,
-                        ));
-                    }
+                    amt.borrow_mut().attrs.push((
+                        "Ccy".to_string(),
+                        transaction.opening_balance.balance.iso_currency_code.clone(),
+                    ));
                     let mut cd_text = stat.customer_ref.clone();
                     if let Some(sup_det) = &stat.supplementary_details {
                         cd_text += "/";
@@ -451,7 +449,7 @@ impl From<MT940Format> for Camt053Format {
                                 "ValDt",
                                 [crt_with_text(
                                     "Dt",
-                                    Some(stat.value_date.format("%Y-%m-%dT00:00:00").to_string()),
+                                    Some(stat.value_date.format("%Y-%m-%d").to_string()),
                                 )].as_ref(),
                             ),
                             crt_with_text("Sts", Some("BOOK".to_string())),
@@ -472,7 +470,7 @@ impl From<MT940Format> for Camt053Format {
                             "BookgDt",
                             [crt_with_text(
                                 "Dt",
-                                Some(entry.format("%Y-%m-%dT00:00:00").to_string()),
+                                Some(entry.format("%Y-%m-%d").to_string()),
                             )].as_ref(),
                         ))
                     }

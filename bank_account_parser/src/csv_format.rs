@@ -249,8 +249,8 @@ mod tests {
             "Какая-то строка до таблицы",
             "Ещё строка",
             "Дата проводки,Сумма по дебету,Сумма по кредиту",
-            "2026-01-20,123.45,",
-            "2026-01-21,,10.00",
+            "20.01.2026,123.45,",
+            "21.01.2026,,10.00",
             ",,,",
             "Строка после таблицы",
         ].join("\n")
@@ -304,8 +304,8 @@ mod tests {
 
         let written = String::from_utf8(out).expect("utf8");
         assert!(written.contains("Дата проводки"));
-        assert!(written.contains("2026-01-20"));
-        assert!(written.contains("2026-01-21"));
+        assert!(written.contains("20.01.2026"));
+        assert!(written.contains("21.01.2026"));
 
         let mut cur2 = Cursor::new(written.as_bytes());
         let fmt2 = CSVFormat::from_read(&mut cur2).expect("parse2");
