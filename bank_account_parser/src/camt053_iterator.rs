@@ -94,7 +94,7 @@ impl Iterator for Camt053Iter {
             self.first = false;
             return Some(TagView {
                 node: self.tag.clone(),
-                path: self.path.join("/"),
+                path: '/'.to_string() + self.path.join("/").as_str(),
             })
         }
         
@@ -112,7 +112,7 @@ impl Iterator for Camt053Iter {
             self.tag = children;
             return Some(TagView {
                 node: self.tag.clone(),
-                path: self.path.join("/"),
+                path: '/'.to_string() + self.path.join("/").as_str(),
             });
         }
 
@@ -122,7 +122,7 @@ impl Iterator for Camt053Iter {
                 Exists => {
                     return Some(TagView {
                         node: self.tag.clone(),
-                        path: self.path.join("/"),
+                        path: '/'.to_string() + self.path.join("/").as_str(),
                     });
                 }
                 Empty => break,
@@ -171,10 +171,10 @@ mod tests {
         assert_eq!(
             got,
             vec![
-                ("root".to_string(), "".to_string()),
-                ("root/A".to_string(), "".to_string()),
-                ("root/A/B".to_string(), "bbb".to_string()),
-                ("root/A/C".to_string(), "".to_string()),
+                ("/root".to_string(), "".to_string()),
+                ("/root/A".to_string(), "".to_string()),
+                ("/root/A/B".to_string(), "bbb".to_string()),
+                ("/root/A/C".to_string(), "".to_string()),
             ]
         );
     }
@@ -186,7 +186,7 @@ mod tests {
             .attrs
             .push(("Ccy".to_string(), "EUR".to_string()));
 
-        let v = TagView::new(n, "Stmt/Ntry/Amt".to_string());
+        let v = TagView::new(n, "/Stmt/Ntry/Amt".to_string());
         assert_eq!(v.get_attr("Ccy").as_deref(), Some("EUR"));
         assert_eq!(v.get_attr("Missing"), None);
     }

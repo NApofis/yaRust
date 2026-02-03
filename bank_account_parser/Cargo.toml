@@ -1,6 +1,6 @@
 [package]
 name = "bank_account_parser"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 
 [dependencies]
@@ -11,5 +11,3 @@ rust_decimal = "1"
 quick-xml = "0.39"
 csv = "1.4"
 uuid = { version = "1", features = ["v4"] }
-anyhow = "1"
-clap = { version = "4", features = ["derive"] }

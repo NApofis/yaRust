@@ -1,5 +1,5 @@
 use crate::camt053_iterator::Camt053Iter;
-use crate::common::{FormatError, GeneratorFormatError};
+use crate::error::{FormatError, GeneratorFormatError};
 use crate::common::debit_credit::DebitOrCredit;
 use crate::mt940_format::{AvailableBalance, MT940Format};
 use crate::transactions_holder::{Transaction, TransactionsReader};
@@ -248,20 +248,25 @@ impl From<MT940Format> for Camt053Format {
 
             {
                 // <Id>
-                let mut id_text = transaction.statement_no.clone();
+                let id = crt_with_text("Id", Some(transaction.transaction_ref_no.clone()));
+                let elctrn = crt_with_text("ElctrncSeqNb", Some(transaction.statement_no.clone()));
+                stmt_child = vec![id, elctrn];
+
+                let mut seq_nb = String::new();
                 transaction
                     .sequence_no
                     .as_deref()
-                    .map(|seq| format!("/{}", seq))
-                    .inspect(|s| id_text.push_str(s));
-                let id = crt_with_text("Id", Some(id_text));
+                    .map(|seq| format!("{}", seq.trim()))
+                    .inspect(|s| seq_nb.push_str(s));
 
-                stmt_child = vec![id];
-            }
+                if !seq_nb.is_empty() {
+                    stmt_child.push(crt_with_text("LglSeqNb", Some(seq_nb)));
 
-            if let Some(seq) = &transaction.sequence_no {
-                let t = crt_with_text("ElctrncSeqNb", Some(seq.clone()));
-                stmt_child.push(t);
+                }
+                if let Some(info) = transaction.information_to_account_owner.clone() {
+                    stmt_child.push(crt_with_text("AddtlStmtInf", Some(info)));
+                }
+
             }
 
             {
@@ -271,11 +276,11 @@ impl From<MT940Format> for Camt053Format {
                     [
                         crt_with_text(
                             "FrDtTm",
-                            Some(transaction.opening_balance.date.format("%Y-%m-%dT00:00:00").to_string()),
+                            Some(transaction.opening_balance.balance.date.format("%Y-%m-%d").to_string()),
                         ),
                         crt_with_text(
                             "ToDtTm",
-                            Some(transaction.closing_balance.date.format("%Y-%m-%dT00:00:00").to_string()),
+                            Some(transaction.closing_balance.balance.date.format("%Y-%m-%d").to_string()),
                         ),
                     ].as_ref(),
                 ));
@@ -301,7 +306,7 @@ impl From<MT940Format> for Camt053Format {
 
                 acct.borrow_mut().childrens.push(crt_with_text(
                     "Ccy",
-                    Some(transaction.opening_balance.iso_currency_code.clone()),
+                    Some(transaction.opening_balance.balance.iso_currency_code.clone()),
                 ));
                 stmt_child.push(acct)
             }
@@ -322,7 +327,7 @@ impl From<MT940Format> for Camt053Format {
                                 "Dt",
                                 [crt_with_text(
                                     "Dt",
-                                    Some(bal.date.format("%Y-%m-%dT00:00:00").to_string()),
+                                    Some(bal.date.format("%Y-%m-%d").to_string()),
                                 )].as_ref(),
                             ),
                             crt_with_child(
@@ -416,7 +421,7 @@ impl From<MT940Format> for Camt053Format {
                     let amt = crt_with_text("Amt", Some(stat.amount.to_string()));
                     amt.borrow_mut().attrs.push((
                         "Ccy".to_string(),
-                        transaction.opening_balance.iso_currency_code.clone(),
+                        transaction.opening_balance.balance.iso_currency_code.clone(),
                     ));
                     let mut cd_text = stat.customer_ref.clone();
                     if let Some(sup_det) = &stat.supplementary_details {
@@ -444,7 +449,7 @@ impl From<MT940Format> for Camt053Format {
                                 "ValDt",
                                 [crt_with_text(
                                     "Dt",
-                                    Some(stat.value_date.format("%Y-%m-%dT00:00:00").to_string()),
+                                    Some(stat.value_date.format("%Y-%m-%d").to_string()),
                                 )].as_ref(),
                             ),
                             crt_with_text("Sts", Some("BOOK".to_string())),
@@ -454,7 +459,7 @@ impl From<MT940Format> for Camt053Format {
                                     "Prtry",
                                     [
                                         crt_with_text("Cd", Some(cd_text.to_string())),
-                                        crt_with_text("Issr", Some("MT940".to_string())),
+                                        crt_with_text("Issr", Some(stat.transaction_type_ident_code.clone())),
                                     ].as_ref(),
                                 )].as_ref(),
                             ),
@@ -465,7 +470,7 @@ impl From<MT940Format> for Camt053Format {
                             "BookgDt",
                             [crt_with_text(
                                 "Dt",
-                                Some(entry.format("%Y-%m-%dT00:00:00").to_string()),
+                                Some(entry.format("%Y-%m-%d").to_string()),
                             )].as_ref(),
                         ))
                     }
@@ -666,16 +671,16 @@ mod tests {
             assert_eq!(msg.information_to_account_owner.as_deref(), Some("STATEMENT INFO"));
 
             // Opening balance
-            assert_eq!(msg.opening_balance.iso_currency_code, "EUR");
-            assert_eq!(msg.opening_balance.debit_credit_indicator, DebitOrCredit::Credit);
-            assert_eq!(msg.opening_balance.date, d(2024, 1, 1));
-            assert_eq!(msg.opening_balance.amount, dec("100.00"));
+            assert_eq!(msg.opening_balance.balance.iso_currency_code, "EUR");
+            assert_eq!(msg.opening_balance.balance.debit_credit_indicator, DebitOrCredit::Credit);
+            assert_eq!(msg.opening_balance.balance.date, d(2024, 1, 1));
+            assert_eq!(msg.opening_balance.balance.amount, dec("100.00"));
 
             // Closing balance
-            assert_eq!(msg.closing_balance.iso_currency_code, "EUR");
-            assert_eq!(msg.closing_balance.debit_credit_indicator, DebitOrCredit::Credit);
-            assert_eq!(msg.closing_balance.date, d(2024, 1, 2));
-            assert_eq!(msg.closing_balance.amount, dec("98.77"));
+            assert_eq!(msg.closing_balance.balance.iso_currency_code, "EUR");
+            assert_eq!(msg.closing_balance.balance.debit_credit_indicator, DebitOrCredit::Credit);
+            assert_eq!(msg.closing_balance.balance.date, d(2024, 1, 2));
+            assert_eq!(msg.closing_balance.balance.amount, dec("98.77"));
         }
     }
 }
