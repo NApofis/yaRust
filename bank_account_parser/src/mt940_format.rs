@@ -59,7 +59,7 @@ impl From<ParseError> for FormatError {
     }
 }
 
-#[derive(Default, Clone, Eq, PartialEq)]
+#[derive(Default, Clone, Eq, PartialEq, Debug)]
 pub struct AvailableBalance {
     pub debit_credit_indicator: DebitOrCredit,
     pub date: NaiveDate,
