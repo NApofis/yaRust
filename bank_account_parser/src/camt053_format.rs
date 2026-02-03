@@ -1,5 +1,5 @@
 use crate::camt053_iterator::Camt053Iter;
-use crate::common::{FormatError, GeneratorFormatError};
+use crate::error::{FormatError, GeneratorFormatError};
 use crate::common::debit_credit::DebitOrCredit;
 use crate::mt940_format::{AvailableBalance, MT940Format};
 use crate::transactions_holder::{Transaction, TransactionsReader};

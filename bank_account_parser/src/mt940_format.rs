@@ -7,7 +7,7 @@ use std::mem;
 use std::str::FromStr;
 use rust_decimal::prelude::Zero;
 use crate::camt053_format::Camt053Format;
-use crate::common::{FormatError, GeneratorFormatError};
+use crate::error::{FormatError, GeneratorFormatError};
 use crate::common::debit_credit::DebitOrCredit;
 use crate::transactions_holder::{Transaction, TransactionsReader};
 

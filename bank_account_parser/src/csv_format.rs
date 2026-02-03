@@ -1,4 +1,4 @@
-use crate::common::{FormatError, GeneratorFormatError};
+use crate::error::{FormatError, GeneratorFormatError};
 use crate::common::debit_credit::DebitOrCredit;
 use crate::transactions_holder::{Transaction, TransactionsReader};
 use chrono::NaiveDate;
