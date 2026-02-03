@@ -1,7 +1,7 @@
 use std::fmt;
 use std::fmt::Formatter;
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum FormatError {
     DataFormatError(String),
     UnknownValueFormat(String),

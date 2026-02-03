@@ -23,6 +23,7 @@ pub struct Tag {
 }
 
 #[derive(Default)]
+#[derive(Debug)]
 pub struct Camt053Format {
     root: Rc<RefCell<Tag>>,
 }
@@ -130,10 +131,14 @@ impl Camt053Format {
                 }
                 Ok(Event::Comment(_)) => continue,
                 Ok(Event::Eof) => break,
-                Err(e) => Err(Self::unknown_error(
-                    format!("неопределенная ошибка {}", e).as_str(),
+                Err(e) => Err(Self::read_write_error(
+                    format!("не удалось разложить xml файл на теги {}", e).as_str(),
                 ))?,
-                _ => Err(Self::unknown_error("неопределенная ошибка"))?,
+                _ => {
+                    Err(Self::read_write_error(r#"при разборе файла встретился неизвестный раздел.
+                    Сейчас поддерживаются блоки <...>, </...>, комментарии,
+                    текст относящийся к тегам и символы завершения файла."#))?
+                }
             }
             buf.clear();
         }
@@ -584,6 +589,25 @@ mod tests {
         assert!(paths.iter().any(|p| p.ends_with("Document")));
         assert!(paths.iter().any(|p| p.ends_with("Stmt/Id")));
         assert!(paths.iter().any(|p| p.ends_with("Stmt/Ntry/Amt")));
+    }
+
+    #[test]
+    fn from_read_parses_basic_xml_and_check_error() {
+        let mut xml = "<first>".to_string();
+        let result = Camt053Format::from_read(&mut Cursor::new(xml.clone())).unwrap_err();
+        assert_eq!(result, FormatError::DataFormatError("Ошибка разбора формата camt053 : не удалось прочитать ни одного тега".to_string()));
+
+        xml.push_str("<second>text</second></third>");
+        let result = Camt053Format::from_read(&mut Cursor::new(xml.clone())).unwrap_err();
+        assert!(matches!(result, FormatError::ReadWriteError(_)));
+
+        let new_xml = "<first><second>>text</second></first>$$$";
+        let result = Camt053Format::from_read(&mut Cursor::new(new_xml)).unwrap_err();
+        assert_eq!(result, FormatError::DataFormatError("Ошибка разбора формата camt053 : не найден тег которому принадлежит текст $$$".to_string()));
+
+        let new_xml = "<first><second><--! --> text</second></first>";
+        let result = Camt053Format::from_read(&mut Cursor::new(new_xml)).unwrap_err();
+        assert_eq!(result, FormatError::UnknownValueFormat("Ошибка разбора формата camt053 : не удалось распарсить атрибуты тега --!".to_string()));
     }
 
     #[test]
